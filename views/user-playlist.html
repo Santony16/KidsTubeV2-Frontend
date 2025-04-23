@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Playlists - KidsTube</title>
+    <!-- Add the auth script before any other scripts -->
+    <script src="../utils/auth.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../css/userplaylist.css">
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">KidsTube</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <div class="input-group">
+                            <input type="text" class="form-control" placeholder="Search videos..." id="searchInput">
+                            <button class="btn btn-primary" type="button" onclick="searchVideos()">Search 🔎</button>
+                        </div>
+                    </li>
+                    <li class="nav-item ms-2">
+                        <a class="nav-link btn btn-danger text-white" href="main.html">Exit</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div id="playlistsView">
+            <h2 class="mb-4">My Playlists</h2>
+            <div class="row" id="playlistsContainer">
+                <!-- Playlists will be loaded dynamically -->
+            </div>
+        </div>
+        
+        <div id="videosView" style="display: none;">
+            <button class="btn btn-secondary back-button" onclick="showPlaylists()">← Back to Playlists</button>
+            <h2 class="mb-4" id="currentPlaylistName">Playlist Videos</h2>
+            <div class="row" id="videosContainer">
+                <!-- Videos will be loaded dynamically -->
+            </div>
+        </div>
+        
+        <div id="searchResultsView" style="display: none;">
+            <button class="btn btn-secondary back-button" onclick="showPlaylists()">← Back to Playlists</button>
+            <h2 class="mb-4">Search Results</h2>
+            <div class="row" id="searchResultsContainer">
+                <!-- Search results will be loaded dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../scripts/user-playlist.js"></script>
+</body>
+
+</html>
