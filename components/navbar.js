@@ -67,7 +67,7 @@ function loadNavbar() {
 function updateWelcomeMessage() {
     const welcomeElement = document.getElementById('userWelcome');
     if (welcomeElement) {
-        const userJson = localStorage.getItem('currentUser');
+        const userJson = sessionStorage.getItem('currentUser');
         if (userJson) {
             const currentUser = JSON.parse(userJson);
             welcomeElement.textContent = `Welcome, ${currentUser.email}`;
@@ -77,5 +77,7 @@ function updateWelcomeMessage() {
 
 // Make sure the logout function is available globally
 window.logout = function() {
-    localStorage.removeItem('currentUser');
+    sessionStorage.removeItem('authToken');
+    sessionStorage.removeItem('currentUser');
+    window.location.href = '../index.html';
 };
