@@ -6,7 +6,6 @@ let youtubeSearchResults = [];
 // API URLs
 const GRAPHQL_URL = 'http://localhost:4000/graphql';
 const REST_API_URL = 'http://localhost:3001/api';
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; // Ensure this is set in your environment variables
 
 // Helper functions for API calls
 async function executeGraphQLQuery(query, variables) {
@@ -157,20 +156,45 @@ async function loadAvailableVideos() {
             }
         `;
         
+        console.log('Fetching available videos...');
         const result = await executeGraphQLQuery(VIDEOS_QUERY, {});
+        
+        if (!result || !result.videos) {
+            console.error('Invalid response format:', result);
+            throw new Error('Failed to retrieve videos');
+        }
+        
         availableVideos = result.videos;
+        console.log(`Loaded ${availableVideos.length} videos for selection`);
         
         const videoSelect = document.getElementById('videoSelect');
         videoSelect.innerHTML = '<option value="">-- Select an existing video --</option>';
         
-        availableVideos.forEach(video => {
-            const option = document.createElement('option');
-            option.value = video.id;
-            option.textContent = video.name;
-            videoSelect.appendChild(option);
-        });
+        if (availableVideos.length === 0) {
+            const noVideosOption = document.createElement('option');
+            noVideosOption.disabled = true;
+            noVideosOption.textContent = 'No videos available - create one first';
+            videoSelect.appendChild(noVideosOption);
+            console.log('No videos available to select');
+        } else {
+            availableVideos.forEach(video => {
+                const option = document.createElement('option');
+                option.value = video.id;
+                option.textContent = video.name || 'Unnamed Video';
+                videoSelect.appendChild(option);
+                console.log(`Added video option: ${video.name} (${video.id})`);
+            });
+        }
     } catch (error) {
         console.error('Error loading available videos:', error);
+        const videoSelect = document.getElementById('videoSelect');
+        videoSelect.innerHTML = '<option value="">Error loading videos</option>';
+        
+        // Add a more detailed error message to the page
+        const errorElement = document.createElement('div');
+        errorElement.className = 'alert alert-danger mt-2';
+        errorElement.textContent = `Failed to load videos: ${error.message}`;
+        videoSelect.parentNode.appendChild(errorElement);
     }
 }
 // Function to extract YouTube video ID from URL
@@ -283,17 +307,38 @@ async function addVideoToPlaylist() {
         
         let videoId;
         if (newVideoName && newVideoUrl) {
+            console.log('Creating new video:', newVideoName);
+            // Get current user ID
+            const userJson = sessionStorage.getItem('currentUser');
+            let userId = '';
+            
+            if (userJson) {
+                const currentUser = JSON.parse(userJson);
+                userId = currentUser.id;
+            }
+            
             const newVideoResponse = await callRestApi('videos/create', 'POST', {
                 name: newVideoName,
                 url: newVideoUrl,
-                description: newVideoDescription
+                description: newVideoDescription || '',
+                userId: userId
             });
+            
+            if (!newVideoResponse || !newVideoResponse.videoId) {
+                console.error('Invalid video creation response:', newVideoResponse);
+                throw new Error('Failed to create new video');
+            }
+            
             videoId = newVideoResponse.videoId;
+            console.log('New video created with ID:', videoId);
         } else {
             videoId = selectedVideoId;
+            console.log('Using existing video ID:', videoId);
         }
         
+        console.log(`Adding video ${videoId} to playlist ${playlistId}`);
         const response = await callRestApi(`playlists/${playlistId}/videos`, 'POST', { videoId });
+        
         if (response) {
             const modal = bootstrap.Modal.getInstance(document.getElementById('addVideoModal'));
             modal.hide();
@@ -305,8 +350,11 @@ async function addVideoToPlaylist() {
             window.location.reload();
         }
     } catch (error) {
-        console.error('Error:', error);
-        alert(error.message || 'An error occurred');
+        console.error('Error adding video to playlist:', error);
+        alert(`Error: ${error.message || 'Failed to add video to playlist'}`);
+        
+        // Restore the video container
+        loadPlaylistVideos();
     }
 }
 // Function to remove a video from the playlist
