@@ -54,40 +54,66 @@ async function executeGraphQLQuery(query, variables) {
   }
 }
 
-async function loginUser() {
-    const email = document.getElementById("email").value;
-    const password = document.getElementById("password").value;
-
-    if (!email || !password) {
-        alert("Please enter both email and password.");
-        return;
+// Function to handle normal login with email and password
+function loginUser() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  
+  if (!email || !password) {
+    alert('Please enter both email and password');
+    return;
+  }
+  
+  // Show loading state
+  const loginButton = document.querySelector('.btn-outline-light');
+  if (loginButton) {
+    loginButton.disabled = true;
+    loginButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Logging in...';
+  }
+  
+  fetch(`${REST_API_URL}/users/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ email, password })
+  })
+  .then(response => response.json())
+  .then(result => {
+    if (result.error) {
+      throw new Error(result.error);
     }
-
-    try {
-        // Step 1: Initial login with email/password using REST API
-        const loginResult = await callRestApi('users/login', 'POST', { email, password });
-        
-        // If verification is required (2FA step)
-        if (loginResult.requiresVerification) {
-            showVerificationDialog(loginResult.userId);
-        } else if (loginResult.user) {
-            // Standard login success (user object exists)
-            localStorage.setItem('currentUser', JSON.stringify(loginResult.user));
-            
-            // Store the token if provided
-            if (loginResult.token) {
-                localStorage.setItem('authToken', loginResult.token);
-            }
-            
-            console.log('User information saved to localStorage');
-            window.location.href = "views/main.html";
-        } else {
-            alert(`Error: ${loginResult.message || 'Unknown error'}`);
-        }
-    } catch (error) {
-        console.error("Request failed:", error);
-        alert(`Error: ${error.message || 'An error occurred while logging in'}`);
+    
+    // Check if SMS verification is required
+    if (result.requireSmsVerification) {
+      // Store user data for SMS verification process
+      sessionStorage.setItem('tempUserId', result.userId);
+      sessionStorage.setItem('tempUserPhone', result.user.phone);
+      
+      // Show SMS verification dialog
+      showVerificationDialog(result.userId);
+    } else {
+      // Standard login - store token and redirect
+      sessionStorage.setItem('authToken', result.token);
+      
+      if (result.user) {
+        sessionStorage.setItem('currentUser', JSON.stringify(result.user));
+      }
+      
+      // Redirect to main page
+      window.location.href = 'views/main.html';
     }
+  })
+  .catch(error => {
+    console.error('Login failed:', error);
+    alert(`Login error: ${error.message || 'An error occurred during login'}`);
+    
+    // Restore button
+    if (loginButton) {
+      loginButton.disabled = false;
+      loginButton.innerHTML = 'Login';
+    }
+  });
 }
 
 // Function to show the verification dialog
@@ -106,6 +132,11 @@ function showVerificationDialog(userId) {
                             <input type="text" id="verificationCode" class="form-control form-control-lg" maxlength="6" />
                             <label class="form-label" for="verificationCode">Verification Code</label>
                         </div>
+                        <div class="text-center">
+                            <button type="button" class="btn btn-outline-light btn-sm" onclick="resendCode('${userId}')">
+                                Resend Code
+                            </button>
+                        </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-outline-light" onclick="verifyCode('${userId}')">Verify</button>
@@ -123,6 +154,63 @@ function showVerificationDialog(userId) {
     // Initialize and show the modal
     const modal = new bootstrap.Modal(document.getElementById('smsVerificationModal'));
     modal.show();
+    
+    // Send the SMS verification code
+    const phoneNumber = sessionStorage.getItem('tempUserPhone');
+    
+    // Send SMS verification request
+    sendSmsVerification(userId, phoneNumber);
+}
+
+// Function to send SMS verification code
+async function sendSmsVerification(userId, phoneNumber) {
+    try {
+        console.log('Sending SMS verification for user:', userId);
+        
+        // Show loading indicator
+        const sendButton = document.querySelector('[onclick^="resendCode"]');
+        if (sendButton) {
+            sendButton.disabled = true;
+            sendButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+        }
+        
+        const response = await fetch(`${REST_API_URL}/sms/send-verification`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ userId, phoneNumber })
+        });
+        
+        const result = await response.json();
+        
+        // Reset button state
+        if (sendButton) {
+            sendButton.disabled = false;
+            sendButton.innerHTML = 'Resend Code';
+        }
+        
+        if (!response.ok) {
+            console.error('SMS verification request failed:', result.error || result.message);
+            alert(`Failed to send verification code: ${result.error || result.message || 'Unknown error'}`);
+            return false;
+        } else {
+            console.log('SMS verification code sent successfully');
+            return true;
+        }
+    } catch (error) {
+        console.error('SMS verification request error:', error);
+        alert('Failed to send verification code. Please try again.');
+        
+        // Reset button state
+        const sendButton = document.querySelector('[onclick^="resendCode"]');
+        if (sendButton) {
+            sendButton.disabled = false;
+            sendButton.innerHTML = 'Resend Code';
+        }
+        
+        return false;
+    }
 }
 
 // Function to verify the SMS code
@@ -135,23 +223,37 @@ async function verifyCode(userId) {
     }
     
     try {
-        // Call REST API to verify the code
-        const verifyResult = await callRestApi('users/verify-sms', 'POST', { userId, code });
+        console.log('Verifying code for user:', userId);
+        
+        const response = await fetch(`${REST_API_URL}/sms/verify-code`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ userId, code })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Verification failed');
+        }
+        
+        const verifyResult = await response.json();
         
         if (verifyResult.user) {
             // Hide the verification modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('smsVerificationModal'));
             modal.hide();
             
-            // Save user data and token
-            localStorage.setItem('currentUser', JSON.stringify(verifyResult.user));
+            // Save user data and token in sessionStorage
+            sessionStorage.setItem('currentUser', JSON.stringify(verifyResult.user));
             
             if (verifyResult.token) {
-                localStorage.setItem('authToken', verifyResult.token);
-                console.log('JWT token saved to localStorage');
+                sessionStorage.setItem('authToken', verifyResult.token);
+                console.log('JWT token saved to sessionStorage');
             }
             
-            console.log('User information saved to localStorage after 2FA');
+            console.log('User information saved to sessionStorage after 2FA');
             window.location.href = "views/main.html";
         } else {
             alert(`Verification failed: ${verifyResult.message || 'Unknown error'}`);
@@ -162,6 +264,91 @@ async function verifyCode(userId) {
     }
 }
 
+// Function to resend the verification code
+async function resendCode(userId) {
+    const phoneNumber = sessionStorage.getItem('tempUserPhone');
+    await sendSmsVerification(userId, phoneNumber);
+    alert('A new verification code has been sent.');
+}
+
+// Google authentication configuration
+const GOOGLE_CLIENT_ID = '551020481634-gnc0j03vj54281b97ga21q4rrqbmtcd9.apps.googleusercontent.com';
+
+// Handle Google Sign-In response
+function handleGoogleResponse(response) {
+  // Get the ID token from the response
+  const token = response.credential;
+  
+  if (!token) {
+    console.error('Google authentication failed: No token received');
+    alert('Google authentication failed. Please try again.');
+    return;
+  }
+  
+  // Send the token to backend for verification
+  fetch(`${REST_API_URL}/users/google-auth`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  })
+  .then(response => response.json())
+  .then(result => {
+    if (result.error) {
+      throw new Error(result.error);
+    }
+    
+    if (result.isNewUser || result.requiresCompletion) {
+      // New user or existing user that needs to complete profile
+      // Store token and user ID temporarily
+      sessionStorage.setItem('googleToken', token);
+      sessionStorage.setItem('tempUserId', result.userId);
+      
+      // Redirect to complete profile page
+      window.location.href = 'views/complete-profile.html';
+    } else {
+      // Existing user with complete profile
+      sessionStorage.setItem('authToken', result.token);
+      sessionStorage.setItem('currentUser', JSON.stringify(result.user));
+      
+      // Redirect to main page
+      window.location.href = 'views/main.html';
+    }
+  })
+  .catch(error => {
+    console.error('Google authentication error:', error);
+    alert(`Authentication error: ${error.message || 'Unknown error occurred'}`);
+  });
+}
+
+// Initialize Google Sign-In button
+document.addEventListener('DOMContentLoaded', function() {
+  // Initialize Google Sign-In if the API is loaded
+  if (typeof google !== 'undefined' && google.accounts) {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleResponse
+    });
+    
+    google.accounts.id.renderButton(
+      document.getElementById('googleSignInButton'),
+      { 
+        theme: 'outline', 
+        size: 'large', 
+        text: 'continue_with',
+        shape: 'rectangular',
+        width: '100%'
+      }
+    );
+  } else {
+    console.error('Google Sign-In API not loaded');
+    document.getElementById('googleSignInButton').innerHTML = 
+      '<div class="alert alert-warning">Google Sign-In unavailable</div>';
+  }
+});
+
 // Make functions available globally
 window.loginUser = loginUser;
 window.verifyCode = verifyCode;
+window.sendSmsVerification = sendSmsVerification;
+window.resendCode = resendCode;
+window.handleGoogleResponse = handleGoogleResponse;
