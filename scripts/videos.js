@@ -266,15 +266,32 @@ async function searchYouTubeVideos() {
       })
     });
     
+    // Check response status before processing JSON
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('GraphQL server error response:', text);
+      throw new Error(`Server error: ${response.status}. Please try again later.`);
+    }
+    
     const result = await response.json();
     console.log('GraphQL response:', result);
     
+    // More detailed error handling
     if (result.errors) {
-      throw new Error(result.errors[0].message || 'GraphQL Error');
+      const errorMsg = result.errors[0].message;
+      console.error('GraphQL error details:', result.errors);
+      
+      // Check for specific API key errors
+      if (errorMsg.includes('API key') || errorMsg.includes('API configuration')) {
+        throw new Error('YouTube API configuration error. Please contact support.');
+      }
+      
+      throw new Error(errorMsg || 'GraphQL Error');
     }
     
     if (!result.data || !result.data.youtubeSearch) {
-      throw new Error('No YouTube search results returned');
+      console.error('Unexpected GraphQL response format:', result);
+      throw new Error('Invalid response format');
     }
     
     youtubeSearchResults = result.data.youtubeSearch;
@@ -289,7 +306,11 @@ async function searchYouTubeVideos() {
   } catch (error) {
     console.error('Error searching YouTube:', error);
     document.getElementById('youtubeSearchResults').innerHTML = 
-      `<div class="alert alert-danger">Error: ${error.message || 'Failed to search YouTube'}</div>`;
+      `<div class="alert alert-danger">
+        <h4>Search Error</h4>
+        <p>${error.message || 'Failed to search YouTube'}</p>
+        <p>Please try again or contact support if the problem persists.</p>
+      </div>`;
   }
 }
 
