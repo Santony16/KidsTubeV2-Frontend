@@ -1,20 +1,15 @@
-// get the current user from local storage
 let currentUser = null;
 
 document.addEventListener('DOMContentLoaded', function() {
-    // load the current user
     loadCurrentUser();
-    
-    // load the restricted users
     loadRestrictedUsers();
 });
 
 function loadCurrentUser() {
-    const userJson = localStorage.getItem('currentUser');
+    const userJson = sessionStorage.getItem('currentUser');
     if (userJson) {
         currentUser = JSON.parse(userJson);
         
-        // show the welcome message
         const welcomeElement = document.getElementById('userWelcome');
         if (welcomeElement && currentUser) {
             welcomeElement.textContent = `Welcome, ${currentUser.email}`;
@@ -25,15 +20,15 @@ function loadCurrentUser() {
     }
 }
 
-// Function to log out the current user
 function logout() {
-    localStorage.removeItem('currentUser');
+    sessionStorage.removeItem('currentUser');
+    sessionStorage.removeItem('authToken');
+    window.location.href = '../index.html';
 }
 
 async function loadRestrictedUsers() {
     try {
-        // Get current user ID from localStorage
-        const userJson = localStorage.getItem('currentUser');
+        const userJson = sessionStorage.getItem('currentUser');
         let parentUserId = '';
         
         if (userJson) {
@@ -41,9 +36,46 @@ async function loadRestrictedUsers() {
             parentUserId = currentUser.id;
         }
         
-        // Pass the parentUserId as a query parameter
-        const response = await fetch(`http://localhost:3001/api/users/restricted?parentUserId=${parentUserId}`);
-        const users = await response.json();
+        // Use GraphQL to fetch restricted users - NO REST FALLBACK
+        const RESTRICTED_USERS_QUERY = `
+            query GetRestrictedUsers($parentUserId: ID) {
+                restrictedUsers(parentUserId: $parentUserId) {
+                    id
+                    name
+                    avatar
+                    parentUser
+                }
+            }
+        `;
+        
+        const token = sessionStorage.getItem('authToken');
+        
+        const response = await fetch('http://localhost:4000/graphql', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token ? `Bearer ${token}` : '',
+                // Add these headers to prevent CORS issues
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            },
+            body: JSON.stringify({
+                query: RESTRICTED_USERS_QUERY,
+                variables: { parentUserId }
+            })
+        });
+        
+        const responseData = await response.json();
+        
+        if (responseData.errors) {
+            throw new Error(responseData.errors[0].message);
+        }
+        
+        const users = responseData.data.restrictedUsers.map(user => ({
+            _id: user.id, 
+            name: user.name,
+            avatar: user.avatar
+        }));
         
         const profilesContainer = document.getElementById('profiles-container');
         const noProfilesMessage = document.getElementById('no-profiles-message');
@@ -72,6 +104,8 @@ async function loadRestrictedUsers() {
         }
     } catch (error) {
         console.error('Error loading restricted users:', error);
+        document.getElementById('profiles-container').innerHTML = 
+            `<div class="alert alert-danger">Error loading user profiles: ${error.message}</div>`;
     }
 }
 
