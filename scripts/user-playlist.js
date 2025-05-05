@@ -2,6 +2,59 @@ let userId;
 let userPlaylists = [];
 let allVideos = [];
 
+// URLs de API
+const GRAPHQL_URL = 'http://localhost:4000/graphql';
+const REST_API_URL = 'http://localhost:3001/api';
+
+// Function to execute GraphQL queries (only for GET queries)
+async function executeGraphQLQuery(query, variables, token = null) {
+  try {
+    if (!token) {
+      token = sessionStorage.getItem('authToken');
+    }
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
+    };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    console.log('GraphQL Query to be executed:', query.trim());
+    console.log('Variables:', variables);
+    
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        query: query,
+        variables: variables
+      }),
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      throw new Error(`Network error: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log('GraphQL Response:', result);
+    
+    if (result.errors) {
+      console.error('GraphQL returned errors:', result.errors);
+      throw new Error(result.errors[0].message || 'Unknown GraphQL error');
+    }
+    
+    return result.data;
+  } catch (error) {
+    console.error('GraphQL error:', error);
+    throw error;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     // Get userId from URL parameter
     const urlParams = new URLSearchParams(window.location.search);
@@ -25,8 +78,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadUserPlaylists() {
     try {
-        const response = await fetch(`http://localhost:3001/api/playlists/user/${userId}`);
-        const playlists = await response.json();
+        // Usar GraphQL para obtener playlists (GET)
+        const PLAYLISTS_QUERY = `
+          query GetPlaylistsByUser($userId: ID!) {
+            playlistsByUser(userId: $userId) {
+              id
+              name
+              videos {
+                id
+                name
+                url
+                description
+                userId
+              }
+            }
+          }
+        `;
+        
+        const token = sessionStorage.getItem('authToken');
+        const result = await executeGraphQLQuery(PLAYLISTS_QUERY, { userId }, token);
+        const playlists = result.playlistsByUser;
         
         userPlaylists = playlists;
         
@@ -43,7 +114,7 @@ async function loadUserPlaylists() {
             const playlistCard = document.createElement('div');
             playlistCard.className = 'col-md-4 col-sm-6 mb-4';
             playlistCard.innerHTML = `
-                <div class="playlist-card" onclick="showPlaylistVideos('${playlist._id}', '${playlist.name}')">
+                <div class="playlist-card" onclick="showPlaylistVideos('${playlist.id}', '${playlist.name}')">
                     <div class="playlist-header">
                         <h5>${playlist.name}</h5>
                     </div>
@@ -64,12 +135,28 @@ async function loadUserPlaylists() {
 
 async function showPlaylistVideos(playlistId, playlistName) {
     try {
-        const response = await fetch(`http://localhost:3001/api/playlists/${playlistId}/videos`);
-        const videos = await response.json();
+        // Usar GraphQL para obtener videos de una playlist (GET)
+        const PLAYLIST_VIDEOS_QUERY = `
+          query GetPlaylistVideos($id: ID!) {
+            playlist(id: $id) {
+              videos {
+                id
+                name
+                url
+                description
+                userId
+              }
+            }
+          }
+        `;
+        
+        const token = sessionStorage.getItem('authToken');
+        const result = await executeGraphQLQuery(PLAYLIST_VIDEOS_QUERY, { id: playlistId }, token);
+        const videos = result.playlist.videos || [];
         
         // Cache all videos for search functionality
         allVideos = [...allVideos, ...videos.filter(video => 
-            !allVideos.some(v => v._id === video._id)
+            !allVideos.some(v => v.id === video.id)
         )];
         
         document.getElementById('currentPlaylistName').textContent = playlistName;
@@ -96,6 +183,7 @@ async function showPlaylistVideos(playlistId, playlistName) {
     }
 }
 
+// El resto de funciones permanecen sin cambios
 function createVideoCard(video) {
     const videoId = extractYouTubeId(video.url);
     
@@ -134,6 +222,7 @@ function showPlaylists() {
 }
 
 function searchVideos() {
+    // Búsqueda en la caché local en lugar de hacer petición
     const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
     
     if (!searchTerm) {
