@@ -43,7 +43,7 @@ async function saveVideo() {
   }
 
   // Get current user ID
-  const userJson = localStorage.getItem('currentUser');
+  const userJson = sessionStorage.getItem('currentUser');
   let userId = null;
   
   if (userJson) {
@@ -105,11 +105,44 @@ async function saveVideo() {
       alert("Error saving video.");
   }
 }
-// Load the videos into the table
+
+// Helper function to execute GraphQL queries
+async function executeGraphQLQuery(query, variables) {
+  const token = sessionStorage.getItem('authToken');
+  
+  try {
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : '',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      body: JSON.stringify({
+        query: query,
+        variables: variables
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.errors) {
+      throw new Error(result.errors[0].message);
+    }
+    
+    return result.data;
+  } catch (error) {
+    console.error('GraphQL query error:', error);
+    throw error;
+  }
+}
+
+// Load the videos using GraphQL instead of REST API
 async function loadVideos() {
   try {
-    // Get the current user ID from localStorage
-    const userJson = localStorage.getItem('currentUser');
+    // Get the current user ID from sessionStorage
+    const userJson = sessionStorage.getItem('currentUser');
     let userId = '';
     
     if (userJson) {
@@ -117,21 +150,28 @@ async function loadVideos() {
       userId = currentUser.id;
     }
     
-    // Add timestamp and user ID to prevent caching and filter by user
-    const timestamp = new Date().getTime();
-    
-    // Add auth headers
-    const fetchOptions = addAuthHeader({
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
+    // Use GraphQL to fetch videos
+    const VIDEOS_QUERY = `
+      query GetVideos($userId: ID) {
+        videos(userId: $userId) {
+          id
+          name
+          url
+          description
+          userId
+        }
       }
-    });
+    `;
     
-    const response = await fetch(`http://localhost:3001/api/videos?userId=${userId}&_=${timestamp}`, fetchOptions);
-
-    const videos = await response.json();
-
+    const data = await executeGraphQLQuery(VIDEOS_QUERY, { userId });
+    
+    if (!data || !data.videos) {
+      throw new Error('Failed to retrieve videos data');
+    }
+    
+    const videos = data.videos;
+    console.log('Successfully loaded videos via GraphQL:', videos.length);
+    
     const tableBody = document.getElementById("videoTable");
     tableBody.innerHTML = "";
 
@@ -143,8 +183,8 @@ async function loadVideos() {
         <td><a href="${video.url}" target="_blank">${video.url}</a></td>
         <td>${video.description || "No description"}</td>
         <td>
-          <button class="btn btn-warning btn-sm" onclick="editVideo('${video._id}', '${video.name}', '${video.url}', '${video.description}')">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteVideo('${video._id}')">Delete</button>
+          <button class="btn btn-warning btn-sm" onclick="editVideo('${video.id}', '${video.name}', '${video.url}', '${video.description || ''}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteVideo('${video.id}')">Delete</button>
         </td>
       `;
 
@@ -152,15 +192,15 @@ async function loadVideos() {
     });
   } catch (error) {
     console.error("Error loading videos:", error);
+    const tableBody = document.getElementById("videoTable");
+    tableBody.innerHTML = `<tr><td colspan="4" class="text-center">Error loading videos: ${error.message}</td></tr>`;
   }
 }
-
 
 // Delete a video
 async function deleteVideo(videoId) {
   if (!confirm("Are you sure you want to delete this video?")) return;
 
-  // Communicating with API
   try {
     // Add auth headers
     const fetchOptions = addAuthHeader({
@@ -182,8 +222,194 @@ async function deleteVideo(videoId) {
   }
 }
 
+// Add YouTube search functions
+let youtubeSearchResults = [];
+const GRAPHQL_URL = 'http://localhost:4000/graphql';
+
+// Function to perform YouTube search via GraphQL
+async function searchYouTubeVideos() {
+  const searchInput = document.getElementById('youtubeSearchInput').value.trim();
+  
+  if (!searchInput) {
+    alert('Please enter a search term');
+    return;
+  }
+  
+  try {
+    document.getElementById('youtubeSearchResults').innerHTML = 
+      '<div class="text-center"><div class="spinner-border" role="status"></div><p>Searching YouTube...</p></div>';
+    
+    const token = sessionStorage.getItem('authToken');
+    const YOUTUBE_SEARCH_QUERY = `
+      query SearchYouTube($query: String!) {
+        youtubeSearch(query: $query) {
+          id
+          title
+          description
+          thumbnailUrl
+          channelTitle
+        }
+      }
+    `;
+    
+    console.log('Executing YouTube search with query:', searchInput);
+    
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : ''
+      },
+      body: JSON.stringify({
+        query: YOUTUBE_SEARCH_QUERY,
+        variables: { query: searchInput }
+      })
+    });
+    
+    const result = await response.json();
+    console.log('GraphQL response:', result);
+    
+    if (result.errors) {
+      throw new Error(result.errors[0].message || 'GraphQL Error');
+    }
+    
+    if (!result.data || !result.data.youtubeSearch) {
+      throw new Error('No YouTube search results returned');
+    }
+    
+    youtubeSearchResults = result.data.youtubeSearch;
+    
+    // Display results
+    displayYouTubeResults(youtubeSearchResults);
+    
+    // Show the search results section
+    document.getElementById('videoSection').style.display = 'none';
+    document.getElementById('youtubeSearchSection').style.display = 'block';
+    
+  } catch (error) {
+    console.error('Error searching YouTube:', error);
+    document.getElementById('youtubeSearchResults').innerHTML = 
+      `<div class="alert alert-danger">Error: ${error.message || 'Failed to search YouTube'}</div>`;
+  }
+}
+
+// Function to display YouTube search results
+function displayYouTubeResults(results) {
+  const resultsContainer = document.getElementById('youtubeSearchResults');
+  
+  if (!results || results.length === 0) {
+    resultsContainer.innerHTML = '<div class="alert alert-info">No videos found matching your search.</div>';
+    return;
+  }
+  
+  resultsContainer.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'row';
+  
+  results.forEach((video) => {
+    const col = document.createElement('div');
+    col.className = 'col-md-4 mb-3';
+    col.innerHTML = `
+      <div class="card h-100">
+        <img src="${video.thumbnailUrl}" class="card-img-top" alt="${video.title}">
+        <div class="card-body">
+          <h6 class="card-title">${video.title}</h6>
+          <p class="card-text small">${video.channelTitle}</p>
+        </div>
+        <div class="card-footer bg-transparent border-top-0">
+          <button class="btn btn-primary btn-sm" onclick="addYouTubeVideo('${video.id}', '${encodeURIComponent(video.title)}', '${encodeURIComponent(video.description || '')}')">
+            Add Video
+          </button>
+        </div>
+      </div>
+    `;
+    
+    row.appendChild(col);
+  });
+  
+  resultsContainer.appendChild(row);
+}
+
+// Function to add a YouTube video from search results
+async function addYouTubeVideo(videoId, titleEncoded, descriptionEncoded) {
+  try {
+    const title = decodeURIComponent(titleEncoded);
+    const description = decodeURIComponent(descriptionEncoded);
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // Get the current user ID
+    const currentUserJson = sessionStorage.getItem('currentUser');
+    let userId = '';
+    
+    if (currentUserJson) {
+      const currentUser = JSON.parse(currentUserJson);
+      userId = currentUser.id;
+    }
+    
+    // Create video using REST API
+    const response = await fetch('http://localhost:3001/api/videos/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionStorage.getItem('authToken')}`,
+      },
+      body: JSON.stringify({
+        name: title,
+        url: url,
+        description: description,
+        userId: userId
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to add video');
+    }
+    
+    alert('Video added successfully!');
+    
+    // Return to videos list and refresh
+    document.getElementById('youtubeSearchSection').style.display = 'none';
+    document.getElementById('videoSection').style.display = 'block';
+    loadVideos();
+    
+  } catch (error) {
+    console.error('Error adding video:', error);
+    alert(`Error adding video: ${error.message}`);
+  }
+}
+
+// Function to show all videos and hide search section
+function showAllVideos() {
+  document.getElementById('youtubeSearchSection').style.display = 'none';
+  document.getElementById('videoSection').style.display = 'block';
+}
+
+// Add these functions to the global scope
+window.searchYouTubeVideos = searchYouTubeVideos;
+window.addYouTubeVideo = addYouTubeVideo;
+window.showAllVideos = showAllVideos;
 
 document.addEventListener("DOMContentLoaded", loadVideos);
 document.querySelector("#videoForm").addEventListener("submit", saveVideo);
 
 window.video = addNewVideo;
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Add event listener for YouTube search
+  const searchButton = document.getElementById('youtubeSearchButton');
+  if (searchButton) {
+    searchButton.addEventListener('click', searchYouTubeVideos);
+  }
+  
+  // Add event listener for search input to trigger search on Enter key
+  const searchInput = document.getElementById('youtubeSearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        searchYouTubeVideos();
+      }
+    });
+  }
+});
