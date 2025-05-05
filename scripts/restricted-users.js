@@ -1,3 +1,5 @@
+// GraphQL endpoint
+const GRAPHQL_URL = 'http://localhost:4000/graphql';
 document.addEventListener('DOMContentLoaded', function() {
     loadUsers();
     loadAvatars();
@@ -42,118 +44,137 @@ function selectAvatar(avatarName, element) {
     document.getElementById('selectedAvatar').value = avatarName;
 }
 
-async function loadUsers() {
-    try {
-        // Get current user ID from localStorage
-        const userJson = localStorage.getItem('currentUser');
-        let parentUserId = '';
-        
-        if (userJson) {
-            const currentUser = JSON.parse(userJson);
-            parentUserId = currentUser.id;
-        }
-        
-        // Add timestamp to prevent browser caching
-        const timestamp = new Date().getTime();
-        
-        // Pass the parentUserId as a query parameter
-        const response = await fetch(`http://localhost:3001/api/users/restricted?parentUserId=${parentUserId}&_=${timestamp}`, {
-            headers: {
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error: ${response.status}`);
-        }
-        
-        const users = await response.json();
-        
-        const usersContainer = document.getElementById('users-container');
-        const noUsersMessage = document.getElementById('no-users-message');
-        
-        if (users.length > 0) {
-            noUsersMessage.style.display = 'none';
-            
-            usersContainer.innerHTML = '';
-            users.forEach(user => {
-                const userCard = document.createElement('div');
-                userCard.className = 'col-md-3 col-sm-6';
-                userCard.innerHTML = `
-                    <div class="profile-card">
-                        <div class="profile-image">
-                            <img src="../assets/avatars/${user.avatar}" alt="${user.name}'s Avatar">
-                        </div>
-                        <div class="profile-info">
-                            <h5>${user.name}</h5>
-                            <div class="mt-3">
-                                <button class="btn btn-warning btn-sm" onclick="editUser('${user._id}')">Edit</button>
-                                <button class="btn btn-danger btn-sm" onclick="deleteUser('${user._id}')">Delete</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                usersContainer.appendChild(userCard);
-            });
-        } else {
-            noUsersMessage.style.display = 'block';
-        }
-    } catch (error) {
-        console.error('Error loading users:', error);
-        // Display error message to user
-        document.getElementById('users-container').innerHTML = 
-            `<div class="col-12 text-center"><div class="alert alert-danger">Error loading users: ${error.message}</div></div>`;
-    }
-}
-
-function editUser(userId) {
-    // Reset form
-    document.getElementById('userForm').reset();
-    document.querySelectorAll('.avatar-option').forEach(avatar => {
-        avatar.classList.remove('selected');
+// Helper function for GraphQL queries with robust error handling
+async function executeGraphQLQuery(query, variables) {
+  try {
+    const token = sessionStorage.getItem('authToken');
+    
+    console.log(`Executing GraphQL query with variables:`, variables);
+    
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : '',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      body: JSON.stringify({
+        query,
+        variables
+      }),
+      credentials: 'include' // Include credentials for CORS
     });
     
-    // Get current user ID from localStorage
-    const userJson = localStorage.getItem('currentUser');
+    // Check for network errors
+    if (!response.ok) {
+      throw new Error(`Network error: ${response.status} ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.errors) {
+      console.error('GraphQL returned errors:', result.errors);
+      throw new Error(result.errors[0].message);
+    }
+    
+    return result.data;
+  } catch (error) {
+    console.error('GraphQL query error:', error);
+    throw error;
+  }
+}
+
+// Load restricted users using GraphQL only - NO REST fallback
+async function loadUsers() {
+  try {
+    // Get current user ID from sessionStorage
+    const userJson = sessionStorage.getItem('currentUser');
     let parentUserId = '';
     
     if (userJson) {
-        const currentUser = JSON.parse(userJson);
-        parentUserId = currentUser.id;
+      const currentUser = JSON.parse(userJson);
+      parentUserId = currentUser.id;
+    } else {
+      throw new Error('No authenticated user found');
     }
     
-    fetch(`http://localhost:3001/api/users/restricted/${userId}?parentUserId=${parentUserId}`)
-        .then(response => response.json())
-        .then(user => {
-            document.getElementById('userId').value = user._id;
-            document.getElementById('fullName').value = user.name;
-            
-            // Clear PIN field - leave it blank for editing
-            document.getElementById('pin').value = '';
-            // Add placeholder to indicate optional for edits
-            document.getElementById('pin').placeholder = 'Enter new PIN (leave blank to keep existing)';
-            
-            document.getElementById('selectedAvatar').value = user.avatar;
-            
-            // Select the correct avatar
-            document.querySelectorAll('.avatar-option').forEach(avatarElement => {
-                const imgSrc = avatarElement.querySelector('img').src;
-                if (imgSrc.includes(user.avatar)) {
-                    avatarElement.classList.add('selected');
-                }
-            });
-            
-            // Show modal
-            const userModal = new bootstrap.Modal(document.getElementById('userModal'));
-            userModal.show();
-        })
-        .catch(error => {
-            console.error('Error fetching user:', error);
-            alert('Error loading user data');
-        });
+    console.log('Loading restricted users for parent ID:', parentUserId);
+    
+    // GraphQL query for restricted users
+    const USERS_QUERY = `
+      query GetRestrictedUsers($parentUserId: ID) {
+        restrictedUsers(parentUserId: $parentUserId) {
+          id
+          name
+          avatar
+          parentUser
+        }
+      }
+    `;
+    
+    // Execute GraphQL query - no fallback to REST
+    const data = await executeGraphQLQuery(USERS_QUERY, { parentUserId });
+    
+    if (!data || !data.restrictedUsers) {
+      throw new Error('Failed to retrieve restricted users data');
+    }
+    
+    const users = data.restrictedUsers;
+    console.log('Successfully loaded users via GraphQL:', users.length);
+    
+    displayUsers(users);
+  } catch (error) {
+    console.error('Error loading users:', error);
+    document.getElementById('users-container').innerHTML = 
+      `<div class="col-12 text-center">
+         <div class="alert alert-danger">
+           <h5>Error loading users</h5>
+           <p>${error.message}</p>
+           <button class="btn btn-outline-danger mt-2" onclick="loadUsers()">
+             Retry
+           </button>
+         </div>
+      </div>`;
+  }
 }
 
+// Function to display users
+function displayUsers(users) {
+  const container = document.getElementById('users-container');
+  
+  if (!users || users.length === 0) {
+    container.innerHTML = `<div class="col-12 text-center"><div class="alert alert-info">No restricted user profiles found.</div></div>`;
+    return;
+  }
+  
+  container.innerHTML = '';
+  
+  users.forEach(user => {
+    const userCard = document.createElement('div');
+    userCard.className = 'col-md-4 mb-4';
+    userCard.innerHTML = `
+      <div class="card">
+        <div class="card-body text-center">
+          <img src="../assets/avatars/${user.avatar || 'default.png'}" class="rounded-circle mb-3" width="100" height="100" alt="Avatar">
+          <h5 class="card-title">${user.name}</h5>
+          <div class="mt-3">
+            <button class="btn btn-primary btn-sm" onclick="viewProfile('${user.id}')">View Profile</button>
+            <button class="btn btn-warning btn-sm" onclick="editUser('${user.id}')">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteUser('${user.id}')">Delete</button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    container.appendChild(userCard);
+  });
+}
+
+// Load users when the document is ready
+document.addEventListener('DOMContentLoaded', loadUsers);
+
+// Function to save or update a user
 async function saveUser() {
     const userId = document.getElementById('userId').value;
     const name = document.getElementById('fullName').value;
@@ -178,8 +199,8 @@ async function saveUser() {
         return;
     }
     
-    //get current user ID from localStorage
-    const userJson = localStorage.getItem('currentUser');
+    //get current user ID from sessionStorage
+    const userJson = sessionStorage.getItem('currentUser');
     let parentUserId = null;
     if (userJson) {
         const currentUser = JSON.parse(userJson);
@@ -200,6 +221,13 @@ async function saveUser() {
     try {
         let response;
         
+        // Disable button and show loading state
+        const saveBtn = document.getElementById('saveUserBtn');
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = userId ? 
+            '<span class="spinner-border spinner-border-sm"></span> Updating...' : 
+            '<span class="spinner-border spinner-border-sm"></span> Creating...';
+        
         if (userId) {
             // Update existing user
             response = await fetch(`http://localhost:3001/api/users/restricted/${userId}`, {
@@ -217,24 +245,38 @@ async function saveUser() {
         }
         
         if (response.ok) {
-            alert(userId ? 'User updated successfully!' : 'User created successfully!');
+            const result = await response.json();
+            console.log(`User ${userId ? 'updated' : 'created'} successfully:`, result);
             
             // Close modal
             const userModal = bootstrap.Modal.getInstance(document.getElementById('userModal'));
             userModal.hide();
             
-            // Force page refresh instead of just reloading users
+            // Show success message
+            alert(userId ? 'User updated successfully!' : 'User created successfully!');
+            
+            // Reload the page to see the changes
             window.location.reload();
         } else {
             const result = await response.json();
             alert(`Error: ${result.error}`);
+            
+            // Reset button state
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = userId ? 'Update User' : 'Create User';
         }
     } catch (error) {
         console.error('Error saving user:', error);
-        alert('An error occurred while saving the user');
+        alert(`An error occurred while saving the user: ${error.message}`);
+        
+        // Reset button state
+        const saveBtn = document.getElementById('saveUserBtn');
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = userId ? 'Update User' : 'Create User';
     }
 }
 
+// Function to delete a user
 async function deleteUser(userId) {
     if (!confirm('Are you sure you want to delete this user?')) {
         return;
