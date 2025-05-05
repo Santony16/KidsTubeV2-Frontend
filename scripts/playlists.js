@@ -1,9 +1,74 @@
 let restrictedUsers = [];
 
+// API URLs
+const GRAPHQL_URL = 'http://localhost:4000/graphql';
+const REST_API_URL = 'http://localhost:3001/api';
+
+// Function to execute GraphQL queries (GET)
+async function executeGraphQLQuery(query, variables) {
+  const token = sessionStorage.getItem('authToken');
+  const headers = { 'Content-Type': 'application/json' };
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  try {
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        query: query,
+        variables: variables
+      })
+    });
+
+    const result = await response.json();
+    
+    if (result.errors) {
+      throw new Error(result.errors[0].message);
+    }
+    
+    return result.data;
+  } catch (error) {
+    console.error('GraphQL error:', error);
+    throw error;
+  }
+}
+
+// Function for REST API calls (mutations)
+async function callRestApi(endpoint, method, data) {
+  const token = sessionStorage.getItem('authToken');
+  const headers = { 'Content-Type': 'application/json' };
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  try {
+    const response = await fetch(`${REST_API_URL}/${endpoint}`, {
+      method: method,
+      headers: headers,
+      body: data ? JSON.stringify(data) : undefined
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || `Error: ${response.status}`);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('REST API error:', error);
+    throw error;
+  }
+}
+
 async function loadRestrictedUsers() {
   try {
-    // Get current user ID from localStorage for filtering
-    const userJson = localStorage.getItem('currentUser');
+    // Get current user ID from sessionStorage for filtering
+    const userJson = sessionStorage.getItem('currentUser');
     let parentUserId = '';
     
     if (userJson) {
@@ -11,8 +76,20 @@ async function loadRestrictedUsers() {
       parentUserId = currentUser.id;
     }
     
-    const response = await fetch(`http://localhost:3001/api/users/restricted?parentUserId=${parentUserId}`);
-    restrictedUsers = await response.json();
+    // Use GraphQL to get restricted users (GET)
+    const RESTRICTED_USERS_QUERY = `
+      query GetRestrictedUsers($parentUserId: ID) {
+        restrictedUsers(parentUserId: $parentUserId) {
+          id
+          name
+          avatar
+          parentUser
+        }
+      }
+    `;
+    
+    const result = await executeGraphQLQuery(RESTRICTED_USERS_QUERY, { parentUserId });
+    restrictedUsers = result.restrictedUsers;
     
     // Populate the profiles dropdown in the modal
     const profilesSelect = document.getElementById("profiles");
@@ -20,7 +97,7 @@ async function loadRestrictedUsers() {
     
     restrictedUsers.forEach(user => {
       const option = document.createElement("option");
-      option.value = user._id;
+      option.value = user.id;
       option.textContent = user.name;
       profilesSelect.appendChild(option);
     });
@@ -40,8 +117,8 @@ async function createPlaylist() {
     return;
   }
 
-  // get user ID from localStorage
-  const userJson = localStorage.getItem('currentUser');
+  // get user ID from sessionStorage
+  const userJson = sessionStorage.getItem('currentUser');
   let userId = null;
   if (userJson) {
     const currentUser = JSON.parse(userJson);
@@ -55,21 +132,14 @@ async function createPlaylist() {
   };
 
   try {
-    const response = await fetch("http://localhost:3001/api/playlists/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(playlist)
-    });
+    // Use REST API to create playlist (POST)
+    const response = await callRestApi("playlists/create", "POST", playlist);
 
-    const result = await response.json();
-
-    if (response.ok) {
+    if (response) {
       alert("Playlist created successfully!");
       const modal = bootstrap.Modal.getInstance(document.getElementById('playlistModal'));
       modal.hide();
       loadPlaylists();
-    } else {
-      alert(`Error: ${result.error}`);
     }
   } catch (error) {
     console.error("Error creating playlist", error);
@@ -79,8 +149,8 @@ async function createPlaylist() {
 
 async function loadPlaylists() {
   try {
-    // Get current user ID from localStorage
-    const userJson = localStorage.getItem('currentUser');
+    // Get current user ID from sessionStorage
+    const userJson = sessionStorage.getItem('currentUser');
     let userId = '';
     
     if (userJson) {
@@ -88,9 +158,23 @@ async function loadPlaylists() {
       userId = currentUser.id;
     }
     
-    // Pass userId as query parameter to fetch only playlists for this user
-    const response = await fetch(`http://localhost:3001/api/playlists?userId=${userId}`);
-    const playlists = await response.json();
+    // Use GraphQL to get playlists (GET)
+    const PLAYLISTS_QUERY = `
+      query GetPlaylists($userId: ID) {
+        playlists(userId: $userId) {
+          id
+          name
+          profiles
+          videos {
+            id
+          }
+          parentUser
+        }
+      }
+    `;
+    
+    const result = await executeGraphQLQuery(PLAYLISTS_QUERY, { userId });
+    const playlists = result.playlists;
 
     const tableBody = document.getElementById("playlistTable");
     tableBody.innerHTML = "";
@@ -108,7 +192,7 @@ async function loadPlaylists() {
           } 
           // If profile is just an ID, find it in restrictedUsers
           else {
-            const user = restrictedUsers.find(u => u._id === profile);
+            const user = restrictedUsers.find(u => u.id === profile);
             return user ? user.name : 'Unknown';
           }
         });
@@ -119,15 +203,15 @@ async function loadPlaylists() {
 
       const row = document.createElement("tr");
 
-      // Show all on the table
+      // Display everything in the table
       row.innerHTML = `
         <td>${playlist.name}</td>
         <td>${profileNames}</td>
         <td>${playlist.videos ? playlist.videos.length : 0}</td>
         <td>
-          <button class="btn btn-info btn-sm" onclick="viewPlaylistVideos('${playlist._id}')">View Videos</button>
-          <button class="btn btn-warning btn-sm" onclick="editPlaylist('${playlist._id}')">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deletePlaylist('${playlist._id}')">Delete</button>
+          <button class="btn btn-info btn-sm" onclick="viewPlaylistVideos('${playlist.id}')">View Videos</button>
+          <button class="btn btn-warning btn-sm" onclick="editPlaylist('${playlist.id}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deletePlaylist('${playlist.id}')">Delete</button>
         </td>
       `;
 
@@ -136,6 +220,8 @@ async function loadPlaylists() {
 
   } catch (error) {
     console.error("Error loading playlists:", error);
+    const tableBody = document.getElementById("playlistTable");
+    tableBody.innerHTML = `<tr><td colspan="4" class="text-center">Error loading playlists: ${error.message}</td></tr>`;
   }
 }
 
@@ -145,17 +231,22 @@ function viewPlaylistVideos(playlistId) {
 
 async function editPlaylist(playlistId) {
   try {
-    // Fetch the playlist data
-    const response = await fetch(`http://localhost:3001/api/playlists/${playlistId}`);
+    // Use GraphQL to get playlist data (GET)
+    const PLAYLIST_QUERY = `
+      query GetPlaylist($id: ID!) {
+        playlist(id: $id) {
+          id
+          name
+          profiles
+        }
+      }
+    `;
     
-    if (!response.ok) {
-      throw new Error('Failed to fetch playlist data');
-    }
+    const result = await executeGraphQLQuery(PLAYLIST_QUERY, { id: playlistId });
+    const playlist = result.playlist;
     
-    const playlist = await response.json();
-    
-    // Fill in the edit form
-    document.getElementById('playlistId').value = playlist._id;
+    // Fill the edit form
+    document.getElementById('playlistId').value = playlist.id;
     document.getElementById('name').value = playlist.name;
     
     // Clear previous selections
@@ -167,7 +258,7 @@ async function editPlaylist(playlistId) {
     // Select the profiles that are in this playlist
     if (playlist.profiles && Array.isArray(playlist.profiles)) {
       playlist.profiles.forEach(profile => {
-        const profileId = typeof profile === 'object' ? profile._id : profile;
+        const profileId = typeof profile === 'object' ? profile.id : profile;
         
         // Find and select the option with this profile ID
         Array.from(profilesSelect.options).forEach(option => {
@@ -178,7 +269,7 @@ async function editPlaylist(playlistId) {
       });
     }
     
-    // Change the modal's save button to call updatePlaylist instead
+    // Change the modal button to call updatePlaylist
     const saveButton = document.querySelector('#playlistModal .btn-success');
     saveButton.onclick = () => updatePlaylist();
     
@@ -207,35 +298,29 @@ async function updatePlaylist() {
   }
   
   try {
-    const response = await fetch(`http://localhost:3001/api/playlists/${playlistId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        name, 
-        profiles: selectedProfiles
-      })
+    // Use REST API to update playlist (PUT)
+    const response = await callRestApi(`playlists/${playlistId}`, 'PUT', { 
+      name, 
+      profiles: selectedProfiles
     });
     
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to update playlist');
+    if (response) {
+      alert('Playlist updated successfully!');
+      
+      // Close modal and reset it for future use
+      const modal = bootstrap.Modal.getInstance(document.getElementById('playlistModal'));
+      modal.hide();
+      
+      // Reset the save button to call createPlaylist
+      const saveButton = document.querySelector('#playlistModal .btn-success');
+      saveButton.onclick = () => createPlaylist();
+      
+      // Reset the modal title
+      document.getElementById('playlistModalLabel').textContent = 'Add/Edit Playlist';
+      
+      // Reload playlists to show updated data
+      loadPlaylists();
     }
-    
-    alert('Playlist updated successfully!');
-    
-    // Close modal and reset modal for future use
-    const modal = bootstrap.Modal.getInstance(document.getElementById('playlistModal'));
-    modal.hide();
-    
-    // Reset the save button to call createPlaylist
-    const saveButton = document.querySelector('#playlistModal .btn-success');
-    saveButton.onclick = () => createPlaylist();
-    
-    // Reset the modal title
-    document.getElementById('playlistModalLabel').textContent = 'Add/Edit Playlist';
-    
-    // Reload playlists to show updated data
-    loadPlaylists();
   } catch (error) {
     console.error('Error updating playlist:', error);
     alert(error.message || 'Error updating playlist');
@@ -248,16 +333,12 @@ async function deletePlaylist(playlistId) {
   }
   
   try {
-    const response = await fetch(`http://localhost:3001/api/playlists/${playlistId}`, {
-      method: "DELETE"
-    });
+    // Use REST API to delete playlist (DELETE)
+    const response = await callRestApi(`playlists/${playlistId}`, 'DELETE');
     
-    if (response.ok) {
+    if (response) {
       alert("Playlist deleted successfully!");
       loadPlaylists();
-    } else {
-      const result = await response.json();
-      alert(`Error: ${result.error}`);
     }
   } catch (error) {
     console.error("Error deleting playlist:", error);
