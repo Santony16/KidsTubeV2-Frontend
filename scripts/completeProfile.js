@@ -1,47 +1,15 @@
-// GraphQL endpoint
+// API URLs
 const GRAPHQL_URL = 'http://localhost:4000/graphql';
+const REST_API_URL = 'http://localhost:3001/api';
 
-// GraphQL complete profile mutation
-const COMPLETE_PROFILE_MUTATION = `
-  mutation CompleteGoogleProfile(
-    $userId: ID!,
-    $googleToken: String!,
-    $phone: String!,
-    $pin: String!,
-    $birthDate: String!,
-    $country: String!
-  ) {
-    completeGoogleProfile(
-      userId: $userId,
-      googleToken: $googleToken,
-      phone: $phone,
-      pin: $pin,
-      birthDate: $birthDate,
-      country: $country
-    ) {
-      token
-      userId
-      message
-      user {
-        id
-        email
-        firstName
-        lastName
-        phone
-        country
-      }
-    }
-  }
-`;
-
-// Function to execute GraphQL mutation
-async function executeGraphQLMutation(mutation, variables) {
+// Function to execute GraphQL queries (only for GET queries)
+async function executeGraphQLQuery(query, variables) {
   try {
     const response = await fetch(GRAPHQL_URL, {
-      method: 'POST',
+      method: 'POST', // GraphQL always uses POST method but only for GET queries
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: mutation,
+        query: query,
         variables: variables
       })
     });
@@ -59,7 +27,45 @@ async function executeGraphQLMutation(mutation, variables) {
   }
 }
 
-// Load countries from GraphQL instead of direct API call
+// Function for REST API calls (for mutations)
+async function callRestApi(endpoint, method, data, token = null) {
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const options = {
+      method,
+      headers,
+      body: data ? JSON.stringify(data) : undefined
+    };
+    
+    const response = await fetch(`${REST_API_URL}/${endpoint}`, options);
+    // Check if the content type is JSON before attempting to parse it
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(responseData.error || `Error: ${response.status}`);
+      }
+      
+      return responseData;
+    } else {
+      // If not JSON, get the response text for debugging
+      const text = await response.text();
+      console.error('Received non-JSON response:', text);
+      throw new Error(`Expected JSON response, got: ${contentType || 'unknown content type'}`);
+    }
+  } catch (error) {
+    console.error('REST API error:', error);
+    throw error;
+  }
+}
+
+// Load countries from GraphQL (using GET query)
 async function loadCountries() {
   try {
     // Use GraphQL to fetch countries
@@ -72,7 +78,7 @@ async function loadCountries() {
       }
     `;
     
-    const result = await executeGraphQLMutation(COUNTRIES_QUERY, {});
+    const result = await executeGraphQLQuery(COUNTRIES_QUERY, {});
     const countries = result.countries;
     
     const countrySelect = document.getElementById('country');
@@ -97,10 +103,9 @@ async function loadCountries() {
 }
 
 // Check if we have the temporary data from Google sign-in
-// and load country data when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-  const googleToken = localStorage.getItem('googleToken');
-  const userId = localStorage.getItem('tempUserId');
+  const googleToken = sessionStorage.getItem('googleToken');
+  const userId = sessionStorage.getItem('tempUserId');
   
   if (!googleToken || !userId) {
     alert('Google authentication information is missing. Please log in again.');
@@ -111,10 +116,10 @@ document.addEventListener('DOMContentLoaded', () => {
   loadCountries();
 });
 
-// Complete the user profile
+// Complete the user profile using REST API instead of GraphQL
 async function completeProfile() {
-  const googleToken = localStorage.getItem('googleToken');
-  const userId = localStorage.getItem('tempUserId');
+  const googleToken = sessionStorage.getItem('googleToken');
+  const userId = sessionStorage.getItem('tempUserId');
   const phone = document.getElementById('phone').value.trim();
   const birthDate = document.getElementById('birthDate').value;
   const pin = document.getElementById('pin').value.trim();
@@ -151,8 +156,7 @@ async function completeProfile() {
   submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
 
   try {
-    // Call GraphQL mutation to complete the profile
-    const result = await executeGraphQLMutation(COMPLETE_PROFILE_MUTATION, {
+    const result = await callRestApi('users/complete-google-profile', 'POST', {
       userId,
       googleToken,
       phone,
@@ -160,17 +164,15 @@ async function completeProfile() {
       birthDate,
       country
     });
-
-    const profileResult = result.completeGoogleProfile;
     
-    if (profileResult.token && profileResult.user) {
+    if (result.token && result.user) {
       // Save auth data
-      localStorage.setItem('authToken', profileResult.token);
-      localStorage.setItem('currentUser', JSON.stringify(profileResult.user));
+      sessionStorage.setItem('authToken', result.token);
+      sessionStorage.setItem('currentUser', JSON.stringify(result.user));
       
       // Clean up temporary data
-      localStorage.removeItem('googleToken');
-      localStorage.removeItem('tempUserId');
+      sessionStorage.removeItem('googleToken');
+      sessionStorage.removeItem('tempUserId');
       
       // Redirect to main page
       window.location.href = 'main.html';
@@ -180,6 +182,7 @@ async function completeProfile() {
       submitBtn.textContent = 'Complete Registration';
     }
   } catch (error) {
+    console.error('Error completing profile:', error);
     alert(`Error: ${error.message || 'An error occurred while completing your profile'}`);
     submitBtn.disabled = false;
     submitBtn.textContent = 'Complete Registration';
