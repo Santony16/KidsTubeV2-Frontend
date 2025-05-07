@@ -1,5 +1,6 @@
 // GraphQL endpoint
 const GRAPHQL_URL = 'http://localhost:4000/graphql';
+
 document.addEventListener('DOMContentLoaded', function() {
     loadUsers();
     loadAvatars();
@@ -46,133 +47,200 @@ function selectAvatar(avatarName, element) {
 
 // Helper function for GraphQL queries with robust error handling
 async function executeGraphQLQuery(query, variables) {
-  try {
-    const token = sessionStorage.getItem('authToken');
-    
-    console.log(`Executing GraphQL query with variables:`, variables);
-    
-    const response = await fetch(GRAPHQL_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : '',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      },
-      body: JSON.stringify({
-        query,
-        variables
-      }),
-      credentials: 'include' // Include credentials for CORS
-    });
-    
-    // Check for network errors
-    if (!response.ok) {
-      throw new Error(`Network error: ${response.status} ${response.statusText}`);
+    try {
+        const token = sessionStorage.getItem('authToken');
+        
+        console.log(`Executing GraphQL query with variables:`, variables);
+        
+        const response = await fetch(GRAPHQL_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token ? `Bearer ${token}` : '',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            },
+            body: JSON.stringify({
+                query,
+                variables
+            }),
+            credentials: 'include' // Include credentials for CORS
+        });
+        
+        // Check for network errors
+        if (!response.ok) {
+            throw new Error(`Network error: ${response.status} ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.errors) {
+            console.error('GraphQL returned errors:', result.errors);
+            throw new Error(result.errors[0].message);
+        }
+        
+        return result.data;
+    } catch (error) {
+        console.error('GraphQL query error:', error);
+        throw error;
     }
-    
-    const result = await response.json();
-    
-    if (result.errors) {
-      console.error('GraphQL returned errors:', result.errors);
-      throw new Error(result.errors[0].message);
-    }
-    
-    return result.data;
-  } catch (error) {
-    console.error('GraphQL query error:', error);
-    throw error;
-  }
 }
 
 // Load restricted users using GraphQL only - NO REST fallback
 async function loadUsers() {
-  try {
-    // Get current user ID from sessionStorage
-    const userJson = sessionStorage.getItem('currentUser');
-    let parentUserId = '';
-    
-    if (userJson) {
-      const currentUser = JSON.parse(userJson);
-      parentUserId = currentUser.id;
-    } else {
-      throw new Error('No authenticated user found');
-    }
-    
-    console.log('Loading restricted users for parent ID:', parentUserId);
-    
-    // GraphQL query for restricted users
-    const USERS_QUERY = `
-      query GetRestrictedUsers($parentUserId: ID) {
-        restrictedUsers(parentUserId: $parentUserId) {
-          id
-          name
-          avatar
-          parentUser
+    try {
+        // Get current user ID from sessionStorage
+        const userJson = sessionStorage.getItem('currentUser');
+        let parentUserId = '';
+        
+        if (userJson) {
+            const currentUser = JSON.parse(userJson);
+            parentUserId = currentUser.id;
+        } else {
+            throw new Error('No authenticated user found');
         }
-      }
-    `;
-    
-    // Execute GraphQL query - no fallback to REST
-    const data = await executeGraphQLQuery(USERS_QUERY, { parentUserId });
-    
-    if (!data || !data.restrictedUsers) {
-      throw new Error('Failed to retrieve restricted users data');
+        
+        console.log('Loading restricted users for parent ID:', parentUserId);
+        
+        // GraphQL query for restricted users
+        const USERS_QUERY = `
+            query GetRestrictedUsers($parentUserId: ID) {
+                restrictedUsers(parentUserId: $parentUserId) {
+                    id
+                    name
+                    avatar
+                    parentUser
+                }
+            }
+        `;
+        
+        // Execute GraphQL query
+        const data = await executeGraphQLQuery(USERS_QUERY, { parentUserId });
+        
+        if (!data || !data.restrictedUsers) {
+            throw new Error('Failed to retrieve restricted users data');
+        }
+        
+        const users = data.restrictedUsers;
+        console.log('Successfully loaded users via GraphQL:', users.length);
+        
+        displayUsers(users);
+    } catch (error) {
+        console.error('Error loading users:', error);
+        document.getElementById('users-container').innerHTML = 
+            `<div class="col-12 text-center">
+                <div class="alert alert-danger">
+                    <h5>Error loading users</h5>
+                    <p>${error.message}</p>
+                    <button class="btn btn-outline-danger mt-2" onclick="loadUsers()">
+                        Retry
+                    </button>
+                </div>
+            </div>`;
     }
-    
-    const users = data.restrictedUsers;
-    console.log('Successfully loaded users via GraphQL:', users.length);
-    
-    displayUsers(users);
-  } catch (error) {
-    console.error('Error loading users:', error);
-    document.getElementById('users-container').innerHTML = 
-      `<div class="col-12 text-center">
-         <div class="alert alert-danger">
-           <h5>Error loading users</h5>
-           <p>${error.message}</p>
-           <button class="btn btn-outline-danger mt-2" onclick="loadUsers()">
-             Retry
-           </button>
-         </div>
-      </div>`;
-  }
 }
 
 // Function to display users
 function displayUsers(users) {
-  const container = document.getElementById('users-container');
-  
-  if (!users || users.length === 0) {
-    container.innerHTML = `<div class="col-12 text-center"><div class="alert alert-info">No restricted user profiles found.</div></div>`;
-    return;
-  }
-  
-  container.innerHTML = '';
-  
-  users.forEach(user => {
-    const userCard = document.createElement('div');
-    userCard.className = 'col-md-4 mb-4';
-    userCard.innerHTML = `
-      <div class="card">
-        <div class="card-body text-center">
-          <img src="../assets/avatars/${user.avatar || 'default.png'}" class="rounded-circle mb-3" width="100" height="100" alt="Avatar">
-          <h5 class="card-title">${user.name}</h5>
-          <div class="mt-3">
-            <button class="btn btn-primary btn-sm" onclick="viewProfile('${user.id}')">View Profile</button>
-            <button class="btn btn-warning btn-sm" onclick="editUser('${user.id}')">Edit</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteUser('${user.id}')">Delete</button>
-          </div>
-        </div>
-      </div>
-    `;
+    const container = document.getElementById('users-container');
     
-    container.appendChild(userCard);
-  });
+    if (!users || users.length === 0) {
+        container.innerHTML = `<div class="col-12 text-center"><div class="alert alert-info">No restricted user profiles found.</div></div>`;
+        return;
+    }
+    
+    container.innerHTML = '';
+    
+    users.forEach(user => {
+        const userCard = document.createElement('div');
+        userCard.className = 'col-md-4 mb-4';
+        userCard.innerHTML = `
+            <div class="card">
+                <div class="card-body text-center">
+                    <img src="../assets/avatars/${user.avatar || 'default.png'}" class="rounded-circle mb-3" width="100" height="100" alt="Avatar">
+                    <h5 class="card-title">${user.name}</h5>
+                    <div class="mt-3">
+                        <button class="btn btn-warning btn-sm" onclick="editUser('${user.id}')">Edit</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteUser('${user.id}')">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        container.appendChild(userCard);
+    });
 }
 
-// Load users when the document is ready
-document.addEventListener('DOMContentLoaded', loadUsers);
+// Function to edit a user
+async function editUser(userId) {
+    try {
+        console.log('Editing user:', userId);
+        
+        // GraphQL query to get user details
+        const USER_QUERY = `
+            query GetRestrictedUser($id: ID!) {
+                restrictedUser(id: $id) {
+                    id
+                    name
+                    avatar
+                    parentUser
+                }
+            }
+        `;
+        
+        const data = await executeGraphQLQuery(USER_QUERY, { id: userId });
+        const user = data.restrictedUser;
+        
+        if (!user) {
+            throw new Error('User not found');
+        }
+        
+        // Populate the form fields
+        document.getElementById('userId').value = user.id;
+        document.getElementById('fullName').value = user.name;
+        
+        // PIN field is left empty because we don't want to force changing PIN
+        document.getElementById('pin').value = '';
+        
+        // Show that PIN is optional when editing
+        const pinRequiredIndicator = document.getElementById('pinRequiredIndicator');
+        if (pinRequiredIndicator) {
+            pinRequiredIndicator.style.display = 'none';
+        }
+        
+        const pinHelpText = document.getElementById('pinHelpText');
+        if (pinHelpText) {
+            pinHelpText.innerText = 'Leave blank to keep the current PIN.';
+        }
+        
+        // Select the avatar
+        document.querySelectorAll('.avatar-option').forEach(avatarEl => {
+            const avatarImg = avatarEl.querySelector('img');
+            if (avatarImg && avatarImg.src.includes(user.avatar)) {
+                selectAvatar(user.avatar, avatarEl);
+            }
+        });
+        
+        // Update modal title and button text
+        document.getElementById('userModalLabel').textContent = 'Edit Restricted User';
+        const saveBtn = document.getElementById('saveUserBtn');
+        saveBtn.textContent = 'Update User';
+        
+        // Show the modal
+        const userModal = new bootstrap.Modal(document.getElementById('userModal'));
+        userModal.show();
+        
+    } catch (error) {
+        console.error('Error editing user:', error);
+        alert(`Error loading user data: ${error.message}`);
+    }
+}
+
+// Function to view a restricted user's profile
+function viewProfile(userId) {
+    // Navigate to the user profile page
+    window.location.href = `user-profile.html?id=${userId}`;
+}
 
 // Function to save or update a user
 async function saveUser() {
@@ -300,3 +368,9 @@ async function deleteUser(userId) {
         alert('An error occurred while deleting the user');
     }
 }
+
+// Make functions available globally
+window.saveUser = saveUser;
+window.viewProfile = viewProfile;
+window.deleteUser = deleteUser;
+window.editUser = editUser;
